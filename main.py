@@ -3,8 +3,6 @@ import re
 import logging
 import time
 from pathlib import Path
-from datetime import datetime, timedelta
-from zoneinfo import ZoneInfo
 
 import aiohttp
 import schedule
@@ -18,24 +16,38 @@ FILENAME_XLSX = r'procedures.xlsx'
 FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
 Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
+RETRIES = 30
+
 
 async def collect_data() -> None:
     appended = 0
     async with aiohttp.ClientSession() as s:
-        procedures_urls_to_append = await get_procedures_urls(s)
+
+        for retry in range(1, RETRIES+1):
+            try:
+                procedures_urls_to_append = await get_procedures_urls(s)
+                break
+            except Exception as ex:
+                if retry == RETRIES:
+                    logging.error(ex, exc_info=True)
+                    raise
+                logging.warning(ex, exc_info=True)
+                time.sleep(10)
+
         for procedure_url in procedures_urls_to_append:
-            for i in range(1, 11):
+            for retry in range(1, RETRIES+1):
                 try:
                     res = await handle_procedure(s, procedure_url)
                     break
                 except Exception as ex:
-                    if i == 10:
+                    if retry == RETRIES:
                         logging.error(ex, exc_info=True)
                         raise
                     logging.warning(ex, exc_info=True)
                     time.sleep(10)
             appended += 1 if res else 0
-        logging.info(f'Collected {appended} procedures data')
+
+        logging.info(f'Collected data of {appended} procedures\n\n')
 
 
 async def get_procedures_urls(s: aiohttp.ClientSession) -> list:
@@ -110,24 +122,23 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
                 extension = re.search(r'(?<=\()[a-zA-Z\d]+(?=\)$)', a_doc.text).group(0)
                 filename = a_doc.text.replace(f'({extension})', '')
                 filename = ''.join(list(filename)[:-1]) if list(filename)[-1] == ' ' else filename
-                # filename = '_'.join(filename.split())
                 filename = f"{filename}.{extension}"
             else:
                 filename = re.search(r'(?<=\().+(?=\))', a_doc.text).group(0) \
                     if re.search(r'(?<=\().+(?=\))', a_doc.text) else a_doc.text
             filename = re.sub(r'[<>:"/\\|?*]', '', filename)
-            filenames.append(filename)
             filepath = Path(DIR_PROCEDURES, procedure_number, filename)
 
             same_filenames = [x for x in filenames if filename in x]
-            if len(same_filenames) > 1:
+            if len(same_filenames) > 0:
                 filepath = Path(
                     filepath.parent, f'{filepath.stem}_{len(same_filenames)}'
                 ).with_suffix(filepath.suffix)
+            filenames.append(filename)
 
             files_data.append({'url': doc_url, 'path': filepath})
 
-        for retry in range(1, 11):
+        for retry in range(1, RETRIES+1):
             tasks_download = [download_file(s, d['url'], d['path']) for d in files_data]
             results = await asyncio.gather(*tasks_download, return_exceptions=True)
 
@@ -138,7 +149,7 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
             if not files_data:
                 break
             time.sleep(10)
-            logging.warning(f'Retry №:{retry} while download files. Tasks count: {len(tasks_download)}')
+            logging.warning(f'Retry №:{retry} while downloading files. Tasks count: {len(tasks_download)}')
         else:
             logging.error('ERROR while downloading files')
             raise ConnectionError('ERROR while downloading files')
@@ -153,7 +164,7 @@ async def download_file(s: aiohttp.ClientSession, url: str, filepath: Path) -> b
             return True
 
 
-def append_row_to_xlsx(filepath: Path, row: dict):
+def append_row_to_xlsx(filepath: Path, row: dict) -> None:
     if not filepath.exists():
         pd.DataFrame().to_excel(str(filepath), index=False)
 
