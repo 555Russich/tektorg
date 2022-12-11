@@ -158,7 +158,7 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
 
 async def download_file(s: aiohttp.ClientSession, url: str, filepath: Path) -> bool:
     logging.info(f'Downloading "{filepath.name}" from {url}')
-    async with s.get(url) as r:
+    async with s.get(url, timeout=60*20) as r:
         with open(str(filepath), 'wb') as f:
             f.write(await r.read())
             return True
