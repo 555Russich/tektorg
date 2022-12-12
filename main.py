@@ -20,37 +20,42 @@ RETRIES = 15
 
 
 async def collect_data() -> None:
-    appended = 0
+    urls = (
+        'https://www.tektorg.ru/rosneft/procedures',
+        'https://www.tektorg.ru/rosnefttkp/procedures'
+    )
     async with aiohttp.ClientSession() as s:
-
-        for retry in range(1, RETRIES+1):
-            try:
-                procedures_urls_to_append = await get_procedures_urls(s)
-                break
-            except Exception as ex:
-                if retry == RETRIES:
-                    logging.error(ex, exc_info=True)
-                    raise
-                logging.warning(ex, exc_info=True)
-                time.sleep(10)
-
-        for procedure_url in procedures_urls_to_append:
+        for url in urls:
+            appended = 0
             for retry in range(1, RETRIES+1):
                 try:
-                    res = await handle_procedure(s, procedure_url)
+                    procedures_urls_to_append = await get_procedures_urls(s, url)
                     break
                 except Exception as ex:
                     if retry == RETRIES:
-                        logging.error(ex, exc_info=True)
+                        logging.error(f'{ex}\n\n', exc_info=True)
                         raise
                     logging.warning(ex, exc_info=True)
                     time.sleep(10)
-            appended += 1 if res else 0
 
-        logging.info(f'Collected data of {appended} procedures\n\n')
+            for procedure_url in procedures_urls_to_append:
+                for retry in range(1, RETRIES+1):
+                    try:
+                        res = await handle_procedure(s, procedure_url)
+                        break
+                    except Exception as ex:
+                        if retry == RETRIES:
+                            logging.error(f'{ex}\n\n', exc_info=True)
+                            raise
+                        logging.warning(ex, exc_info=True)
+                        time.sleep(10)
+                appended += 1 if res else 0
+                break
+
+            logging.info(f'Collected data of {appended} procedures for {url}\n\n')
 
 
-async def get_procedures_urls(s: aiohttp.ClientSession) -> list:
+async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
     procedures_urls_to_append = []
     appended_all_new = False
     last_page_number = None
@@ -65,7 +70,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession) -> list:
     }
     while not appended_all_new:
         procedures_urls_to_append_temp = procedures_urls_to_append.copy()
-        async with s.get('https://www.tektorg.ru/rosneft/procedures', params=params) as r:
+        async with s.get(url, params=params) as r:
             if r.status != 200:
                 raise ConnectionError(f'{r.status=}')
             soup = BeautifulSoup(await r.text(), 'lxml')
