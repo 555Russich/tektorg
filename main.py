@@ -16,7 +16,7 @@ FILENAME_XLSX = r'procedures.xlsx'
 FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
 Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
-RETRIES = 30
+RETRIES = 15
 
 
 async def collect_data() -> None:
@@ -96,25 +96,21 @@ async def get_procedures_urls(s: aiohttp.ClientSession) -> list:
 async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
     logging.info(f'Start collecting data for {url}')
     async with s.get(url) as r:
-        if r.status != 200:
-            raise ConnectionError(f'{r.status=}')
-        soup = BeautifulSoup(await r.text(), 'lxml')
-
-    if 'Вы не авторизированы для доступа к этой странице' in soup.text:
-        logging.info('Unauthorized')
-        return False
+        match r.status:
+            case 403:
+                logging.info(f'Code=403. Unavailable procedure {url}')
+                return False
+            case 200:
+                soup = BeautifulSoup(await r.text(), 'lxml')
+                if 'Вы не авторизированы для доступа к этой странице' in soup.text:
+                    logging.info(f'Code=200. Unavailable procedure {url}')
+                    return False
+            case _:
+                raise ConnectionError(f'{r.status=}')
 
     procedure_number = soup.find('td', text='Номер закупки:').find_next('td').text
     procedure_name = soup.find('span', class_='procedure__item-name').text
-
     Path(DIR_PROCEDURES, procedure_number).mkdir(exist_ok=True)
-    append_row_to_xlsx(
-        Path(DIR_PROCEDURES, FILENAME_XLSX),
-        {
-            'Номер процедуры': procedure_number,
-            'Наименование закупки': procedure_name
-        }
-    )
 
     files_data = []
     filenames = []
@@ -142,21 +138,24 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
 
         files_data.append({'url': doc_url, 'path': filepath})
 
-    for retry in range(1, RETRIES+1):
-        tasks_download = [download_file(s, d['url'], d['path']) for d in files_data]
-        results = await asyncio.gather(*tasks_download, return_exceptions=True)
+    for d in files_data:
+        for retry in range(1, RETRIES+1):
+            try:
+                await download_file(s, d['url'], d['path'])
+                break
+            except:
+                time.sleep(10)
+                logging.warning(f'Retry №:{retry} while downloading file: {d["url"]}')
+        else:
+            raise ConnectionError('ERROR while downloading files')
 
-        for i in reversed(range(len(results))):
-            if results[i] is True:
-                del files_data[i]
-
-        if not files_data:
-            break
-        time.sleep(10)
-        logging.warning(f'Retry №:{retry} while downloading files. Tasks count: {len(tasks_download)}')
-    else:
-        raise ConnectionError('ERROR while downloading files')
-    return True
+    append_row_to_xlsx(
+            Path(DIR_PROCEDURES, FILENAME_XLSX),
+            {
+                'Номер процедуры': procedure_number,
+                'Наименование закупки': procedure_name
+            }
+        )
 
 
 async def download_file(s: aiohttp.ClientSession, url: str, filepath: Path) -> bool:
