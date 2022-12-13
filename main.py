@@ -3,6 +3,7 @@ import re
 import logging
 import time
 from pathlib import Path
+import platform
 
 import aiohttp
 import schedule
@@ -11,12 +12,16 @@ import pandas as pd
 
 from my_logging import get_logger
 
-DIR_PROCEDURES = r'procedures'
+DIR_PROCEDURES = r'D:\procedures' if platform.system() == 'Windows' else 'procedures'
 FILENAME_XLSX = r'procedures.xlsx'
 FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
 Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
 RETRIES = 15
+HEADERS = {
+    'User-Agent':
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+}
 
 
 async def collect_data() -> None:
@@ -24,7 +29,7 @@ async def collect_data() -> None:
         'https://www.tektorg.ru/rosneft/procedures',
         'https://www.tektorg.ru/rosnefttkp/procedures'
     )
-    async with aiohttp.ClientSession() as s:
+    async with aiohttp.ClientSession(headers=HEADERS) as s:
         for url in urls:
             appended = 0
             for retry in range(1, RETRIES+1):
@@ -50,7 +55,6 @@ async def collect_data() -> None:
                         logging.warning(ex, exc_info=True)
                         time.sleep(10)
                 appended += 1 if res else 0
-                break
 
             logging.info(f'Collected data of {appended} procedures for {url}\n\n')
 
@@ -59,7 +63,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
     procedures_urls_to_append = []
     appended_all_new = False
     last_page_number = None
-    procedures_numbers_appended = list(pd.read_excel(str(FILEPATH_XLSX))['Номер процедуры']) \
+    procedures_numbers_appended = list(pd.read_excel(str(FILEPATH_XLSX))['Номер']) \
         if FILEPATH_XLSX.exists() else []
     logging.info('Start collecting procedures urls')
 
@@ -102,19 +106,50 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
     logging.info(f'Start collecting data for {url}')
     async with s.get(url) as r:
         match r.status:
-            case 403:
-                logging.info(f'Code=403. Unavailable procedure {url}')
-                return False
             case 200:
                 soup = BeautifulSoup(await r.text(), 'lxml')
                 if 'Вы не авторизированы для доступа к этой странице' in soup.text:
                     logging.info(f'Code=200. Unavailable procedure {url}')
                     return False
+                elif not soup.find('header', class_='page-header'):
+                    raise ConnectionError(f'{r.status=}. Page data Unavailable')
+            case 403:
+                logging.info(f'Code=403. Unavailable procedure {url}')
+                return False
             case _:
                 raise ConnectionError(f'{r.status=}')
 
-    procedure_number = soup.find('td', text='Номер закупки:').find_next('td').text
+    procedure_data = {}
     procedure_name = soup.find('span', class_='procedure__item-name').text
+    procedure_data['Наименование закупки'] = procedure_name
+
+    pattern_to_parse = [
+        (
+            'div', {
+                'class': 'procedure__item procedure__item--commonInfo',
+                'id': 'commonInfo'
+            }
+        ),
+        (
+            'div', {'class': 'procedure__item procedure__item--timing'},
+        ),
+        (
+            'div', {
+                'class': 'procedure__item',
+                'id': 'orgInfo'
+            }
+        )
+    ]
+    for pattern in pattern_to_parse:
+        for tr in soup.find(*pattern).find('table', class_='procedure__item-table').find_all('tr'):
+            tds = tr.find_all('td')
+            k = tds[0].text.strip()
+            k = k[:-1] if k[-1] == ':' else k
+            k = 'Номер' if k in ('Номер закупки', 'Номер процедуры') else k
+            v = tds[1].text.strip().replace(' GMT+3', '')
+            procedure_data[k] = v
+
+    procedure_number = procedure_data['Номер']
     Path(DIR_PROCEDURES, procedure_number).mkdir(exist_ok=True)
 
     files_data = []
@@ -156,11 +191,9 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
 
     append_row_to_xlsx(
             Path(DIR_PROCEDURES, FILENAME_XLSX),
-            {
-                'Номер процедуры': procedure_number,
-                'Наименование закупки': procedure_name
-            }
+            procedure_data
         )
+    return True
 
 
 async def download_file(s: aiohttp.ClientSession, url: str, filepath: Path) -> bool:
@@ -172,12 +205,20 @@ async def download_file(s: aiohttp.ClientSession, url: str, filepath: Path) -> b
 
 
 def append_row_to_xlsx(filepath: Path, row: dict) -> None:
-    if not filepath.exists():
-        pd.DataFrame().to_excel(str(filepath), index=False)
+    while True:
+        try:
+            if not filepath.exists():
+                pd.DataFrame().to_excel(str(filepath), index=False)
 
-    df = pd.read_excel(str(filepath))
-    df = pd.concat([df, pd.DataFrame([row])])
-    df.to_excel(str(filepath), index=False)
+            df = pd.read_excel(str(filepath))
+            df = pd.concat([df, pd.DataFrame([row])])
+            df.to_excel(str(filepath), index=False)
+            break
+        except PermissionError:
+            logging.info(f'Please CLOSE {str(FILEPATH_XLSX)}. Data can\'t be written while file is opened')
+            time.sleep(5)
+        except:
+            raise
 
 
 def sync_collect_data():
