@@ -75,9 +75,15 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
     while not appended_all_new:
         procedures_urls_to_append_temp = procedures_urls_to_append.copy()
         async with s.get(url, params=params) as r:
-            if r.status != 200:
-                raise ConnectionError(f'{r.status=}')
-            soup = BeautifulSoup(await r.text(), 'lxml')
+            match r.status:
+                case 200:
+                    soup = BeautifulSoup(await r.text(), 'lxml')
+                    if not soup.find('header', class_='page-header'):
+                        with open('empty_search_page.html') as f:
+                            f.write(await r.text())
+                        raise ConnectionError(f'{r.status=}. Page data unavailable')
+                case _:
+                    raise ConnectionError(f'{r.status=}')
 
         if not last_page_number:
             last_page_number = int(soup.find('ul', class_='pagination').find_all('li', class_='')[-1].text)
@@ -91,7 +97,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
             if procedure_number not in procedures_numbers_appended:
                 procedures_urls_to_append.append('https://tektorg.ru' + procedure_href)
 
-        if len(procedures_urls_to_append_temp) == len(procedures_urls_to_append) or\
+        if len(procedures_urls_to_append_temp) == len(procedures_urls_to_append) or \
                 params['page'] == last_page_number:
             appended_all_new = True
 
@@ -112,6 +118,8 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
                     logging.info(f'Code=200. Unavailable procedure {url}')
                     return False
                 elif not soup.find('header', class_='page-header'):
+                    with open('empty_procedure_page.html', 'w') as f:
+                        f.write(soup.text)
                     raise ConnectionError(f'{r.status=}. Page data Unavailable')
             case 403:
                 logging.info(f'Code=403. Unavailable procedure {url}')
@@ -119,10 +127,7 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
             case _:
                 raise ConnectionError(f'{r.status=}')
 
-    procedure_data = {}
-    procedure_name = soup.find('span', class_='procedure__item-name').text
-    procedure_data['Наименование закупки'] = procedure_name
-
+    procedure_data = {'Наименование закупки': soup.find('span', class_='procedure__item-name').text}
     pattern_to_parse = [
         (
             'div', {
@@ -140,6 +145,7 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
             }
         )
     ]
+
     for pattern in pattern_to_parse:
         for tr in soup.find(*pattern).find('table', class_='procedure__item-table').find_all('tr'):
             tds = tr.find_all('td')
