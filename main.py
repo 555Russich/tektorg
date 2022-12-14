@@ -19,8 +19,20 @@ Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
 RETRIES = 15
 HEADERS = {
-    'User-Agent':
-        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
+    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
+    'Cache-Control': 'max-age=0',
+    'Connection': 'keep-alive',
+    # 'Cookie': 'spid=1670409306725_f6146f7e0b0d2ac04c7d9f797425ef3b_bdlfno5dx0td99a4; Drupal.visitor.procedures_theme=blocks; SSESS8aa208d9665c28bb20b7c818a7f80de5=xg1EDHdyxyH70thObeDIa8YxB8AZu7N_V8uGhK26y8I; session-cookie=17309a22b610c23675c675b0d00b0845a531398574f7990673f91773079d33c3c3a67083ce20964533673d45cd03ed48; rerf=AAAAAGOZgwiNLQv7AxppAg==; ipp_uid=1671004935624/1BPmtCNc0ma3gItm/mwqPosjkfokkXeDQKIWRFw==; ipp_key=v1671004935624/v33947245ba5adc7a72e273/UsNRhCDK4gBaTLbVi5+Rtg==',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+    'Upgrade-Insecure-Requests': '1',
+    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
+    'sec-ch-ua': '"Not?A_Brand";v="8", "Chromium";v="108", "Google Chrome";v="108"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Linux"',
 }
 
 
@@ -79,7 +91,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
                 case 200:
                     soup = BeautifulSoup(await r.text(), 'lxml')
                     if not soup.find('header', class_='page-header'):
-                        with open('empty_search_page.html') as f:
+                        with open('empty_search_page.html', 'w', encoding='utf-8') as f:
                             f.write(await r.text())
                         raise ConnectionError(f'{r.status=}. Page data unavailable')
                 case _:
@@ -118,7 +130,7 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
                     logging.info(f'Code=200. Unavailable procedure {url}')
                     return False
                 elif not soup.find('header', class_='page-header'):
-                    with open('empty_procedure_page.html', 'w') as f:
+                    with open('empty_procedure_page.html', 'w', encoding='utf-8') as f:
                         f.write(soup.text)
                     raise ConnectionError(f'{r.status=}. Page data Unavailable')
             case 403:
