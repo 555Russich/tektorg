@@ -18,21 +18,34 @@ FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
 Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
 RETRIES = 15
-HEADERS = {
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.9',
-    'Accept-Language': 'ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7',
-    'Cache-Control': 'max-age=0',
+# cookies = {
+#     'Drupal.visitor.procedures_theme': 'blocks',
+#     'SSESS8aa208d9665c28bb20b7c818a7f80de5': 'zziXwHZkbXLflFg6lbZF3Tj8T4cXwxt_dguDdbrG5dk',
+#     'session-cookie': '1730a716ddf4c24575c675b0b4b53d11486f16c50ee7b5484df407fa464ffa77c38a8489ff43a2b3bab5a3ea6dce12e3',
+#     'rerf': 'AAAAAGOZuqsqqmtwAzImAg==',
+#     'ipp_uid': '1671019178404/npkdDowiuX4fUSaV/jIq/fD5+W/IO0dp15zU8RQ==',
+#     'ipp_key': 'v1671023170423/v33947245ba5adc7a72e273/DPNXA26JAYsrmCYr3EjM6A==',
+#     '_ga_69E4MLGLTE': 'GS1.1.1671023170.4.0.1671023170.0.0.0',
+#     '_ga_MBKDKGVXSM': 'GS1.1.1671023170.2.0.1671023170.0.0.0',
+#     '_ga': 'GA1.2.1363288480.1671019181',
+#     '_gid': 'GA1.2.1936499132.1671019182',
+#     '_ym_uid': '16710191821027696080',
+#     '_ym_d': '1671019182',
+#     '_ym_isad': '2',
+# }
+
+headers = {
+    'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
+    'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
-    # 'Cookie': 'spid=1670409306725_f6146f7e0b0d2ac04c7d9f797425ef3b_bdlfno5dx0td99a4; Drupal.visitor.procedures_theme=blocks; SSESS8aa208d9665c28bb20b7c818a7f80de5=xg1EDHdyxyH70thObeDIa8YxB8AZu7N_V8uGhK26y8I; session-cookie=17309a22b610c23675c675b0d00b0845a531398574f7990673f91773079d33c3c3a67083ce20964533673d45cd03ed48; rerf=AAAAAGOZgwiNLQv7AxppAg==; ipp_uid=1671004935624/1BPmtCNc0ma3gItm/mwqPosjkfokkXeDQKIWRFw==; ipp_key=v1671004935624/v33947245ba5adc7a72e273/UsNRhCDK4gBaTLbVi5+Rtg==',
+    # 'Cookie': 'Drupal.visitor.procedures_theme=blocks; SSESS8aa208d9665c28bb20b7c818a7f80de5=zziXwHZkbXLflFg6lbZF3Tj8T4cXwxt_dguDdbrG5dk; session-cookie=1730a716ddf4c24575c675b0b4b53d11486f16c50ee7b5484df407fa464ffa77c38a8489ff43a2b3bab5a3ea6dce12e3; rerf=AAAAAGOZuqsqqmtwAzImAg==; ipp_uid=1671019178404/npkdDowiuX4fUSaV/jIq/fD5+W/IO0dp15zU8RQ==; ipp_key=v1671023170423/v33947245ba5adc7a72e273/DPNXA26JAYsrmCYr3EjM6A==; _ga_69E4MLGLTE=GS1.1.1671023170.4.0.1671023170.0.0.0; _ga_MBKDKGVXSM=GS1.1.1671023170.2.0.1671023170.0.0.0; _ga=GA1.2.1363288480.1671019181; _gid=GA1.2.1936499132.1671019182; _ym_uid=16710191821027696080; _ym_d=1671019182; _ym_isad=2',
+    'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
     'Sec-Fetch-Site': 'none',
     'Sec-Fetch-User': '?1',
-    'Upgrade-Insecure-Requests': '1',
-    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36',
-    'sec-ch-ua': '"Not?A_Brand";v="8", "Chromium";v="108", "Google Chrome";v="108"',
-    'sec-ch-ua-mobile': '?0',
-    'sec-ch-ua-platform': '"Linux"',
 }
 
 
@@ -41,7 +54,7 @@ async def collect_data() -> None:
         'https://www.tektorg.ru/rosneft/procedures',
         'https://www.tektorg.ru/rosnefttkp/procedures'
     )
-    async with aiohttp.ClientSession(headers=HEADERS) as s:
+    async with aiohttp.ClientSession(headers=headers) as s:
         for url in urls:
             appended = 0
             for retry in range(1, RETRIES+1):
@@ -86,7 +99,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
     }
     while not appended_all_new:
         procedures_urls_to_append_temp = procedures_urls_to_append.copy()
-        async with s.get(url, params=params) as r:
+        async with s.get(url, params=params, allow_redirects=False) as r:
             match r.status:
                 case 200:
                     soup = BeautifulSoup(await r.text(), 'lxml')
