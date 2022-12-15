@@ -99,7 +99,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
     }
     while not appended_all_new:
         procedures_urls_to_append_temp = procedures_urls_to_append.copy()
-        async with s.get(url, params=params, allow_redirects=False) as r:
+        async with s.get(url, params=params) as r:
             match r.status:
                 case 200:
                     soup = BeautifulSoup(await r.text(), 'lxml')
