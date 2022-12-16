@@ -109,8 +109,8 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
             if procedure_number not in procedures_numbers_appended:
                 procedures_urls_to_append.append('https://tektorg.ru' + procedure_href)
 
-        if len(procedures_urls_to_append_temp) == len(procedures_urls_to_append) or \
-                params['page'] == last_page_number:
+        # if len(procedures_urls_to_append_temp) == len(procedures_urls_to_append) or \
+        if params['page'] == last_page_number:
             appended_all_new = True
 
         logging.info(f'Collected urls from page №:{params["page"]}')
