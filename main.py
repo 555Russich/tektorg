@@ -18,25 +18,12 @@ FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
 Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
 RETRIES = 15
-# cookies = {
-#     'Drupal.visitor.procedures_theme': 'blocks',
-#     'SSESS8aa208d9665c28bb20b7c818a7f80de5': 'zziXwHZkbXLflFg6lbZF3Tj8T4cXwxt_dguDdbrG5dk',
-#     'session-cookie': '1730a716ddf4c24575c675b0b4b53d11486f16c50ee7b5484df407fa464ffa77c38a8489ff43a2b3bab5a3ea6dce12e3',
-#     'rerf': 'AAAAAGOZuqsqqmtwAzImAg==',
-#     'ipp_uid': '1671019178404/npkdDowiuX4fUSaV/jIq/fD5+W/IO0dp15zU8RQ==',
-#     'ipp_key': 'v1671023170423/v33947245ba5adc7a72e273/DPNXA26JAYsrmCYr3EjM6A==',
-#     '_ga_69E4MLGLTE': 'GS1.1.1671023170.4.0.1671023170.0.0.0',
-#     '_ga_MBKDKGVXSM': 'GS1.1.1671023170.2.0.1671023170.0.0.0',
-#     '_ga': 'GA1.2.1363288480.1671019181',
-#     '_gid': 'GA1.2.1936499132.1671019182',
-#     '_ym_uid': '16710191821027696080',
-#     '_ym_d': '1671019182',
-#     '_ym_isad': '2',
-# }
 
+ua_platform = '(X11; Ubuntu; Linux x86_64; rv:108.0)' if platform.system() == 'Linux'\
+    else '(Windows NT 10.0; Win64; x64; rv:108.0)'
 headers = {
-    'User-Agent': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'User-Agent': f'Mozilla/5.0 {ua_platform} Gecko/20100101 Firefox/108.0',
+    'Accept': '*/*',
     'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
