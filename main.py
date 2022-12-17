@@ -1,4 +1,5 @@
 import asyncio
+import random
 import re
 import logging
 import time
@@ -17,7 +18,7 @@ FILENAME_XLSX = r'procedures.xlsx'
 FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
 Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
-RETRIES = 15
+RETRIES = 25
 
 ua_platform = '(X11; Ubuntu; Linux x86_64; rv:108.0)' if platform.system() == 'Linux'\
     else '(Windows NT 10.0; Win64; x64; rv:108.0)'
@@ -44,30 +45,17 @@ async def collect_data() -> None:
     async with aiohttp.ClientSession(headers=headers) as s:
         for url in urls:
             appended = 0
-            for retry in range(1, RETRIES+1):
-                try:
-                    procedures_urls_to_append = await get_procedures_urls(s, url)
-                    break
-                except Exception as ex:
-                    if retry == RETRIES:
-                        logging.error(f'{ex}\n\n', exc_info=True)
-                        raise
-                    logging.warning(ex, exc_info=True)
-                    time.sleep(10)
+            procedures_urls_to_append = await do_with_retries(
+                func=get_procedures_urls, _args=(s, url, ),
+                retries=RETRIES, sleep_range=(30, 60)
+            )
 
             for procedure_url in procedures_urls_to_append:
-                for retry in range(1, RETRIES+1):
-                    try:
-                        res = await handle_procedure(s, procedure_url)
-                        break
-                    except Exception as ex:
-                        if retry == RETRIES:
-                            logging.error(f'{ex}\n\n', exc_info=True)
-                            raise
-                        logging.warning(ex, exc_info=True)
-                        time.sleep(10)
+                res = await do_with_retries(
+                    handle_procedure, _args=(s, procedure_url),
+                    retries=RETRIES, sleep_range=(30, 60)
+                )
                 appended += 1 if res else 0
-
             logging.info(f'Collected data of {appended} procedures for {url}\n\n')
 
 
@@ -197,15 +185,10 @@ async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
         files_data.append({'url': doc_url, 'path': filepath})
 
     for d in files_data:
-        for retry in range(1, RETRIES+1):
-            try:
-                await download_file(s, d['url'], d['path'])
-                break
-            except:
-                time.sleep(10)
-                logging.warning(f'Retry №:{retry} while downloading file: {d["url"]}')
-        else:
-            raise ConnectionError('ERROR while downloading files')
+        await do_with_retries(
+            func=download_file, _args=(s, d['url'], d['path']),
+            retries=3, sleep_range=(30, 60)
+        )
 
     append_row_to_xlsx(
             Path(DIR_PROCEDURES, FILENAME_XLSX),
@@ -237,6 +220,18 @@ def append_row_to_xlsx(filepath: Path, row: dict) -> None:
             time.sleep(5)
         except:
             raise
+
+
+async def do_with_retries(func, _args, retries: int, sleep_range: tuple):
+    for retry in range(1, retries+1):
+        try:
+            return await func(*_args)
+        except Exception as ex:
+            if retry == retries:
+                logging.error(f'{ex}\n\n', exc_info=True)
+                raise
+            logging.warning(ex, exc_info=True)
+            time.sleep(random.randint(*sleep_range))
 
 
 def sync_collect_data():
