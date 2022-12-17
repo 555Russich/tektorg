@@ -18,7 +18,7 @@ FILENAME_XLSX = r'procedures.xlsx'
 FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
 Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
-RETRIES = 25
+RETRIES = 31
 
 ua_platform = '(X11; Ubuntu; Linux x86_64; rv:108.0)' if platform.system() == 'Linux'\
     else '(Windows NT 10.0; Win64; x64; rv:108.0)'
@@ -230,8 +230,11 @@ async def do_with_retries(func, _args, retries: int, sleep_range: tuple):
             if retry == retries:
                 logging.error(f'{ex}\n\n', exc_info=True)
                 raise
+            elif retry % 10 == 0:
+                time.sleep(random.randint(3*60, 6*60))
+            else:
+                time.sleep(random.randint(*sleep_range))
             logging.warning(ex, exc_info=True)
-            time.sleep(random.randint(*sleep_range))
 
 
 def sync_collect_data():
