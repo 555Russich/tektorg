@@ -65,7 +65,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
     last_page_number = None
     procedures_numbers_appended = list(pd.read_excel(str(FILEPATH_XLSX))['Номер']) \
         if FILEPATH_XLSX.exists() else []
-    logging.info('Start collecting procedures urls')
+    logging.info(f'Start collecting procedures urls. Already in file {len(procedures_numbers_appended)}')
 
     params = {
         'limit': 100,
