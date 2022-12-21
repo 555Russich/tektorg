@@ -39,7 +39,7 @@ headers = {
 
 async def collect_data() -> None:
     urls = (
-        # 'https://www.tektorg.ru/rosneft/procedures',
+        'https://www.tektorg.ru/rosneft/procedures',
         'https://www.tektorg.ru/rosnefttkp/procedures',
     )
     async with aiohttp.ClientSession(headers=headers) as s:
@@ -213,6 +213,10 @@ def append_row_to_xlsx(filepath: Path, row: dict) -> None:
             df = pd.read_excel(str(filepath))
             df = pd.concat([df, pd.DataFrame([row])])
             df.to_excel(str(filepath), index=False)
+            df.to_excel(
+                str(Path(FILEPATH_XLSX.parent, f'{FILEPATH_XLSX.stem}_copy').with_suffix(FILEPATH_XLSX.suffix))
+                , index=False
+            )
             if interrupted:
                 logging.info('File was successfully written after keyboard interrupt')
                 exit()
