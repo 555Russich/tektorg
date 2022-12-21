@@ -39,8 +39,8 @@ headers = {
 
 async def collect_data() -> None:
     urls = (
-        'https://www.tektorg.ru/rosneft/procedures',
-        'https://www.tektorg.ru/rosnefttkp/procedures'
+        # 'https://www.tektorg.ru/rosneft/procedures',
+        'https://www.tektorg.ru/rosnefttkp/procedures',
     )
     async with aiohttp.ClientSession(headers=headers) as s:
         for url in urls:
@@ -73,7 +73,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
         'sort': 'datestart'
     }
     while not appended_all_new:
-        procedures_urls_to_append_temp = procedures_urls_to_append.copy()
+        # procedures_urls_to_append_temp = procedures_urls_to_append.copy()
         async with s.get(url, params=params) as r:
             match r.status:
                 case 200:
@@ -90,8 +90,7 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
 
         for procedure_div in soup.find_all('div', class_='section-procurement__item'):
             procedure_number = procedure_div.find('div', class_='section-procurement__item-numbers') \
-                .find('span').text.strip().replace('Номер закупки на сайте ЭТП:', '') \
-                .replace(' ', '').replace('\n', '')
+                .find('span').text.split(':')[1].replace('\n', '').strip()
             procedure_href = procedure_div.find('a', class_='section-procurement__item-title').get('href')
 
             if procedure_number not in procedures_numbers_appended:
@@ -100,7 +99,6 @@ async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
         # if len(procedures_urls_to_append_temp) == len(procedures_urls_to_append) or \
         if params['page'] == last_page_number:
             appended_all_new = True
-
         logging.info(f'Collected urls from page №:{params["page"]}')
         params['page'] += 1
 
@@ -206,6 +204,7 @@ async def download_file(s: aiohttp.ClientSession, url: str, filepath: Path) -> b
 
 
 def append_row_to_xlsx(filepath: Path, row: dict) -> None:
+    interrupted = False
     while True:
         try:
             if not filepath.exists():
@@ -214,10 +213,16 @@ def append_row_to_xlsx(filepath: Path, row: dict) -> None:
             df = pd.read_excel(str(filepath))
             df = pd.concat([df, pd.DataFrame([row])])
             df.to_excel(str(filepath), index=False)
+            if interrupted:
+                logging.info('File was successfully written after keyboard interrupt')
+                exit()
             break
         except PermissionError:
             logging.info(f'Please CLOSE {str(FILEPATH_XLSX)}. Data can\'t be written while file is opened')
             time.sleep(5)
+        except KeyboardInterrupt:
+            logging.info(f'Interrupted by keyboard. Trying write file again')
+            interrupted = True
         except:
             raise
 
