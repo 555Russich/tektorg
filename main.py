@@ -79,7 +79,7 @@ async def session_request(method: Callable,
 
 async def collect_data() -> None:
     sections = (
-        # 'rosneft',
+        'rosneft',
         'rosnefttkp',
     )
     async with ClientSession(headers=headers) as s:
