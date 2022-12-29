@@ -5,14 +5,18 @@ import logging
 import time
 from pathlib import Path
 import platform
+from typing import Callable
+from datetime import datetime
 
-import aiohttp
+from aiohttp import ClientSession
 import schedule
-from bs4 import BeautifulSoup
 import pandas as pd
 
 from my_logging import get_logger
 
+DOMAIN = 'https://www.tektorg.ru'
+
+LOGFILE = 'tektorg.log'
 DIR_PROCEDURES = r'D:\procedures' if platform.system() == 'Windows' else 'procedures'
 FILENAME_XLSX = r'procedures.xlsx'
 FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
@@ -24,11 +28,10 @@ ua_platform = '(X11; Ubuntu; Linux x86_64; rv:108.0)' if platform.system() == 'L
     else '(Windows NT 10.0; Win64; x64; rv:108.0)'
 headers = {
     'User-Agent': f'Mozilla/5.0 {ua_platform} Gecko/20100101 Firefox/108.0',
-    'Accept': '*/*',
+    'Accept': 'application/json, */*',
     'Accept-Language': 'ru-RU,ru;q=0.8,en-US;q=0.5,en;q=0.3',
     'Accept-Encoding': 'gzip, deflate, br',
     'Connection': 'keep-alive',
-    # 'Cookie': 'Drupal.visitor.procedures_theme=blocks; SSESS8aa208d9665c28bb20b7c818a7f80de5=zziXwHZkbXLflFg6lbZF3Tj8T4cXwxt_dguDdbrG5dk; session-cookie=1730a716ddf4c24575c675b0b4b53d11486f16c50ee7b5484df407fa464ffa77c38a8489ff43a2b3bab5a3ea6dce12e3; rerf=AAAAAGOZuqsqqmtwAzImAg==; ipp_uid=1671019178404/npkdDowiuX4fUSaV/jIq/fD5+W/IO0dp15zU8RQ==; ipp_key=v1671023170423/v33947245ba5adc7a72e273/DPNXA26JAYsrmCYr3EjM6A==; _ga_69E4MLGLTE=GS1.1.1671023170.4.0.1671023170.0.0.0; _ga_MBKDKGVXSM=GS1.1.1671023170.2.0.1671023170.0.0.0; _ga=GA1.2.1363288480.1671019181; _gid=GA1.2.1936499132.1671019182; _ym_uid=16710191821027696080; _ym_d=1671019182; _ym_isad=2',
     'Upgrade-Insecure-Requests': '1',
     'Sec-Fetch-Dest': 'document',
     'Sec-Fetch-Mode': 'navigate',
@@ -37,165 +40,145 @@ headers = {
 }
 
 
+def do_with_retries(func: Callable,
+                    retries: int = RETRIES,
+                    sleep_range: tuple = (30, 60),
+                    ) -> Callable:
+    async def wrapper(*args, **kwargs):
+        for retry in range(1, retries+1):
+            try:
+                return await func(*args, **kwargs)
+            except Exception as ex:
+                logging.warning(ex, exc_info=True)
+                if retry == retries:
+                    logging.error(f'{ex}\n\n', exc_info=True)
+                    raise
+                elif retry % 10 == 0:
+                    time.sleep(random.randint(1*60, 3*60))
+                else:
+                    time.sleep(random.randint(*sleep_range))
+    return wrapper
+
+
+async def session_request(method: Callable,
+                          url: str,
+                          json_data: dict = None
+                          ) -> dict | bool:
+    async with method(url,
+                      json=json_data
+                      ) as r:
+        match r.status:
+            case 200:
+                return await r.json()
+            case 404:
+                logging.info(f'Page was not found. Probably time expired. {url}')
+                return False
+            case _:
+                raise ConnectionError(f'{r.status=}')
+
+
 async def collect_data() -> None:
-    urls = (
-        'https://www.tektorg.ru/rosneft/procedures',
-        'https://www.tektorg.ru/rosnefttkp/procedures',
+    sections = (
+        # 'rosneft',
+        'rosnefttkp',
     )
-    async with aiohttp.ClientSession(headers=headers) as s:
-        for url in urls:
+    async with ClientSession(headers=headers) as s:
+        for section in sections:
             appended = 0
-            procedures_urls_to_append = await do_with_retries(
-                func=get_procedures_urls, _args=(s, url, ),
-                retries=RETRIES, sleep_range=(30, 60)
-            )
+            procedures_urls_to_append = await get_procedures_urls(s, section)
 
             for procedure_url in procedures_urls_to_append:
-                res = await do_with_retries(
-                    handle_procedure, _args=(s, procedure_url),
-                    retries=RETRIES, sleep_range=(30, 60)
-                )
+                res = await handle_procedure(s, procedure_url)
                 appended += 1 if res else 0
-            logging.info(f'Collected data of {appended} procedures for {url}\n\n')
+            logging.info(f'Collected data of {appended} procedures for {section}\n\n')
 
 
-async def get_procedures_urls(s: aiohttp.ClientSession, url: str) -> list:
-    procedures_urls_to_append = []
+@do_with_retries
+async def get_procedures_urls(s: ClientSession, section: str) -> list:
+    url = DOMAIN + '/api/getProcedures'
     appended_all_new = False
-    last_page_number = None
+    procedures_urls_to_append = []
     procedures_numbers_appended = list(pd.read_excel(str(FILEPATH_XLSX))['Номер']) \
         if FILEPATH_XLSX.exists() else []
-    logging.info(f'Start collecting procedures urls. Already in file {len(procedures_numbers_appended)}')
+    logging.info(f'Start collecting {section=}.'
+                 f' Procedures already appended (all): {len(procedures_numbers_appended)}')
 
-    params = {
-        'limit': 100,
-        'page': 1,
-        'sort': 'datestart'
+    json_data = {
+        'params': {
+            'sectionsCodes[0]': section,
+            'page': 1,
+            'sort': 'datePublished_desc',
+            'limit': 100
+        },
     }
     while not appended_all_new:
-        # procedures_urls_to_append_temp = procedures_urls_to_append.copy()
-        async with s.get(url, params=params) as r:
-            match r.status:
-                case 200:
-                    soup = BeautifulSoup(await r.text(), 'lxml')
-                    if not soup.find('header', class_='page-header'):
-                        with open('empty_search_page.html', 'w', encoding='utf-8') as f:
-                            f.write(await r.text())
-                        raise ConnectionError(f'{r.status=}. Page data unavailable')
-                case _:
-                    raise ConnectionError(f'{r.status=}')
+        procedures_urls_to_append_temp = procedures_urls_to_append.copy()
+        r = await session_request(s.post, url, json_data=json_data)
 
-        if not last_page_number:
-            last_page_number = int(soup.find('ul', class_='pagination').find_all('li', class_='')[-1].text)
+        for d in r['data']:
+            if d['registryNumber'] not in procedures_numbers_appended:
+                procedure_url = f'{DOMAIN}/_next/data/R3_t_JLz9u84VTeoEF5lk/ru/{section}/procedures/{d["id"]}.json'
+                procedures_urls_to_append.append(procedure_url)
 
-        for procedure_div in soup.find_all('div', class_='section-procurement__item'):
-            procedure_number = procedure_div.find('div', class_='section-procurement__item-numbers') \
-                .find('span').text.split(':')[1].replace('\n', '').strip()
-            procedure_href = procedure_div.find('a', class_='section-procurement__item-title').get('href')
-
-            if procedure_number not in procedures_numbers_appended:
-                procedures_urls_to_append.append('https://tektorg.ru' + procedure_href)
-
-        # if len(procedures_urls_to_append_temp) == len(procedures_urls_to_append) or \
-        if params['page'] == last_page_number:
+        if len(procedures_urls_to_append_temp) == len(procedures_urls_to_append) or \
+                json_data['params']['page'] == r['totalPages']:
             appended_all_new = True
-        logging.info(f'Collected urls from page №:{params["page"]}')
-        params['page'] += 1
+
+        logging.info(f'Page {json_data["params"]["page"]}/{r["totalPages"]}.'
+                     f' Collected urls {len(procedures_urls_to_append)}')
+        json_data["params"]['page'] += 1
 
     logging.info(f'Collected {len(procedures_urls_to_append)} new procedures urls')
     return procedures_urls_to_append
 
 
-async def handle_procedure(s: aiohttp.ClientSession, url: str) -> bool:
+@do_with_retries
+async def handle_procedure(s: ClientSession, url: str) -> bool:
     logging.info(f'Start collecting data for {url}')
-    async with s.get(url) as r:
-        match r.status:
-            case 200:
-                soup = BeautifulSoup(await r.text(), 'lxml')
-                if 'Вы не авторизированы для доступа к этой странице' in soup.text:
-                    logging.info(f'Code=200. Unavailable procedure {url}')
-                    return False
-                elif not soup.find('header', class_='page-header'):
-                    with open('empty_procedure_page.html', 'w', encoding='utf-8') as f:
-                        f.write(soup.text)
-                    raise ConnectionError(f'{r.status=}. Page data Unavailable')
-            case 403:
-                logging.info(f'Code=403. Unavailable procedure {url}')
-                return False
-            case _:
-                raise ConnectionError(f'{r.status=}')
+    if not (r := await session_request(s.get, url)):
+        return False
+    r = r['pageProps']['procedureItem']
 
-    procedure_data = {'Наименование закупки': soup.find('span', class_='procedure__item-name').text}
-    pattern_to_parse = [
-        (
-            'div', {
-                'class': 'procedure__item procedure__item--commonInfo',
-                'id': 'commonInfo'
-            }
-        ),
-        (
-            'div', {'class': 'procedure__item procedure__item--timing'},
-        ),
-        (
-            'div', {
-                'class': 'procedure__item',
-                'id': 'orgInfo'
-            }
-        )
-    ]
+    procedure_data = {
+        'Наименование закупки': r['title'],
+        'Номер': r['registryNumber'],
+        'Способ закупки': r['typeName'],
+        'Текущая стадия': r['statusName'],
+        'Дата публикации процедуры': r['dates'].get('datePublished'),
+        'Дата окончания срока подачи технико-коммерческих частей': r['dates'].get('dateEndRegistration'),
+        'Подведение итогов не позднее': r['dates'].get('dateEndSecondPartsReview'),
+        'Наименование организатора': r.get('organizerName'),
+        'Контактный телефон': r.get('contactPhone'),
+        'Адрес электронной почты': r.get('contactEmail'),
+        'ФИО контактного лица': r.get('contactPerson'),
+        'Дата окончания срока подачи технических частей': r['dates'].get('dateRegistrationTech'),
+        'Дата начала срока подачи коммерческих частей': r['dates'].get('dateStartRegistrationCom'),
+        'Дата окончания срока подачи коммерческих частей': r['dates'].get('dateEndRegistrationCom'),
+        'Дата и время окончания срока приема квалификационных частей': None,
+    }
 
-    for pattern in pattern_to_parse:
-        for tr in soup.find(*pattern).find('table', class_='procedure__item-table').find_all('tr'):
-            tds = tr.find_all('td')
-            k = tds[0].text.strip()
-            k = k[:-1] if k[-1] == ':' else k
-            k = 'Номер' if k in ('Номер закупки', 'Номер процедуры') else k
-            v = tds[1].text.strip().replace(' GMT+3', '')
-            procedure_data[k] = v
+    for k, v in procedure_data.items():
+        if re.search(r'Дата|Подведение итогов не позднее', k) and v:
+            procedure_data[k] = datetime.fromisoformat(procedure_data[k]).strftime('%d-%m-%Y %H:%M:%S')
 
-    procedure_number = procedure_data['Номер']
-    Path(DIR_PROCEDURES, procedure_number).mkdir(exist_ok=True)
-
+    Path(DIR_PROCEDURES, procedure_data['Номер']).mkdir(exist_ok=True)
     files_data = []
-    filenames = []
-    for doc in soup.find_all('div', class_='procedure__item--documents-item'):
-        a_doc = doc.find('div', class_='item-name').find('a')
-        doc_url = 'https://tektorg.ru' + a_doc.get('href')
-
-        if 'docprotocol' in doc_url:
-            extension = re.search(r'(?<=\()[a-zA-Z\d]+(?=\)$)', a_doc.text).group(0)
-            filename = a_doc.text.replace(f'({extension})', '')
-            filename = ''.join(list(filename)[:-1]) if list(filename)[-1] == ' ' else filename
-            filename = f"{filename}.{extension}"
-        else:
-            filename = re.search(r'(?<=\().+(?=\))', a_doc.text).group(0) \
-                if re.search(r'(?<=\().+(?=\))', a_doc.text) else a_doc.text
-        filename = re.sub(r'[<>:"/\\|?*]', '', filename)
-        filepath = Path(DIR_PROCEDURES, procedure_number, filename)
-
-        same_filenames = [x for x in filenames if filename in x]
-        if len(same_filenames) > 0:
-            filepath = Path(
-                filepath.parent, f'{filepath.stem}_{len(same_filenames)}'
-            ).with_suffix(filepath.suffix)
-        filenames.append(filename)
-
-        files_data.append({'url': doc_url, 'path': filepath})
+    for doc_data in r['documents']:
+        filename = re.sub(r'[<>:"/\\|?*]', '', doc_data['filename'])
+        filepath = Path(DIR_PROCEDURES, procedure_data['Номер'], filename)
+        if filepath.exists():
+            logging.error(f'{str(filepath)} already exists')
+        files_data.append({'url': doc_data['httpLink'], 'path': filepath})
 
     for d in files_data:
-        await do_with_retries(
-            func=download_file, _args=(s, d['url'], d['path']),
-            retries=3, sleep_range=(30, 60)
-        )
+        await download_file(s, d['url'], d['path'])
 
-    append_row_to_xlsx(
-            Path(DIR_PROCEDURES, FILENAME_XLSX),
-            procedure_data
-        )
+    append_row_to_xlsx(Path(DIR_PROCEDURES, FILENAME_XLSX), procedure_data)
     return True
 
 
-async def download_file(s: aiohttp.ClientSession, url: str, filepath: Path) -> bool:
+@do_with_retries
+async def download_file(s: ClientSession, url: str, filepath: Path) -> bool:
     logging.info(f'Downloading "{filepath.name}" from {url}')
     async with s.get(url, timeout=60*20) as r:
         with open(str(filepath), 'wb') as f:
@@ -213,10 +196,10 @@ def append_row_to_xlsx(filepath: Path, row: dict) -> None:
             df = pd.read_excel(str(filepath))
             df = pd.concat([df, pd.DataFrame([row])])
             df.to_excel(str(filepath), index=False)
-            df.to_excel(
-                str(Path(FILEPATH_XLSX.parent, f'{FILEPATH_XLSX.stem}_copy').with_suffix(FILEPATH_XLSX.suffix))
-                , index=False
-            )
+            df.to_excel(str(
+                Path(FILEPATH_XLSX.parent, f'{FILEPATH_XLSX.stem}_copy')
+                .with_suffix(FILEPATH_XLSX.suffix)
+            ), index=False)
             if interrupted:
                 logging.info('File was successfully written after keyboard interrupt')
                 exit()
@@ -229,21 +212,6 @@ def append_row_to_xlsx(filepath: Path, row: dict) -> None:
             interrupted = True
         except:
             raise
-
-
-async def do_with_retries(func, _args, retries: int, sleep_range: tuple):
-    for retry in range(1, retries+1):
-        try:
-            return await func(*_args)
-        except Exception as ex:
-            if retry == retries:
-                logging.error(f'{ex}\n\n', exc_info=True)
-                raise
-            elif retry % 10 == 0:
-                time.sleep(random.randint(3*60, 6*60))
-            else:
-                time.sleep(random.randint(*sleep_range))
-            logging.warning(ex, exc_info=True)
 
 
 def sync_collect_data():
@@ -260,5 +228,5 @@ def looping_collect_data():
 
 
 if __name__ == '__main__':
-    get_logger('scrapper.log')
+    get_logger(LOGFILE)
     looping_collect_data()
