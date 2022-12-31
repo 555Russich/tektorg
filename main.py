@@ -8,7 +8,7 @@ import platform
 from typing import Callable
 from datetime import datetime
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientResponse
 import schedule
 import pandas as pd
 
@@ -39,6 +39,12 @@ headers = {
     'Sec-Fetch-User': '?1',
 }
 
+TEMP_URL_PART = ''  #  https://www.tektorg.ru/_next/data/{TEMP_URL_PART}/ru/rosneft/procedures/{id}.json
+SECTIONS = (
+    'rosneft',
+    'rosnefttkp',
+)
+
 
 def do_with_retries(func: Callable,
                     retries: int = RETRIES,
@@ -62,33 +68,48 @@ def do_with_retries(func: Callable,
 
 async def session_request(method: Callable,
                           url: str,
+                          response_type: str,
                           json_data: dict = None
-                          ) -> dict | bool:
+                          ) -> dict | str | int | bool:
+    global TEMP_URL_PART
+
     async with method(url,
                       json=json_data
                       ) as r:
         match r.status:
             case 200:
-                return await r.json()
+                match response_type:
+                    case 'json':
+                        return await r.json()
+                    case 'html':
+                        return await r.text()
             case 404:
-                logging.info(f'Page was not found. Probably time expired. {url}')
-                return False
+                return 404
             case _:
                 raise ConnectionError(f'{r.status=}')
 
 
-async def collect_data() -> None:
-    sections = (
-        'rosneft',
-        'rosnefttkp',
-    )
-    async with ClientSession(headers=headers) as s:
-        for section in sections:
-            appended = 0
-            procedures_urls_to_append = await get_procedures_urls(s, section)
+async def get_url_temp_part() -> bool:
+    global TEMP_URL_PART
 
-            for procedure_url in procedures_urls_to_append:
-                res = await handle_procedure(s, procedure_url)
+    url = f'{DOMAIN}/{SECTIONS[0]}/procedures'
+    async with ClientSession(headers=headers) as s:
+        r = await session_request(s.get, url, 'html')
+        return re.search(
+            r'(?<=<script src=\"\/_next\/static\/)pvgA3BcytfvyFujWR0mO9'
+            r'(?=\/_buildManifest\.js\" defer=\"\"><\/script>)',
+            r
+        ).group(0)
+
+
+async def collect_data() -> None:
+    async with ClientSession(headers=headers) as s:
+        for section in SECTIONS:
+            appended = 0
+            procedures_ids = await get_procedures_urls(s, section)
+
+            for procedure_id in procedures_ids:
+                res = await handle_procedure(s, procedure_id, section)
                 appended += 1 if res else 0
             logging.info(f'Collected data of {appended} procedures for {section}\n\n')
 
@@ -97,7 +118,7 @@ async def collect_data() -> None:
 async def get_procedures_urls(s: ClientSession, section: str) -> list:
     url = DOMAIN + '/api/getProcedures'
     appended_all_new = False
-    procedures_urls_to_append = []
+    procedures_ids = []
     procedures_numbers_appended = list(pd.read_excel(str(FILEPATH_XLSX))['Номер']) \
         if FILEPATH_XLSX.exists() else []
     logging.info(f'Start collecting {section=}.'
@@ -112,33 +133,43 @@ async def get_procedures_urls(s: ClientSession, section: str) -> list:
         },
     }
     while not appended_all_new:
-        procedures_urls_to_append_temp = procedures_urls_to_append.copy()
-        r = await session_request(s.post, url, json_data=json_data)
+        procedures_ids_temp = procedures_ids.copy()
+        r = await session_request(s.post, url, 'json', json_data)
 
         for d in r['data']:
             if d['registryNumber'] not in procedures_numbers_appended:
-                procedure_url = f'{DOMAIN}/_next/data/R3_t_JLz9u84VTeoEF5lk/ru/{section}/procedures/{d["id"]}.json'
-                procedures_urls_to_append.append(procedure_url)
+                procedures_ids.append(d["id"])
 
-        if len(procedures_urls_to_append_temp) == len(procedures_urls_to_append) or \
+        if len(procedures_ids_temp) == len(procedures_ids) or \
                 json_data['params']['page'] == r['totalPages']:
             appended_all_new = True
 
         logging.info(f'Page {json_data["params"]["page"]}/{r["totalPages"]}.'
-                     f' Collected urls {len(procedures_urls_to_append)}')
+                     f' Collected ids {len(procedures_ids)}')
         json_data["params"]['page'] += 1
 
-    logging.info(f'Collected {len(procedures_urls_to_append)} new procedures urls')
-    return procedures_urls_to_append
+    logging.info(f'Collected {len(procedures_ids)} new procedures ids')
+    return procedures_ids
 
 
 @do_with_retries
-async def handle_procedure(s: ClientSession, url: str) -> bool:
-    logging.info(f'Start collecting data for {url}')
-    if not (r := await session_request(s.get, url)):
-        return False
-    r = r['pageProps']['procedureItem']
+async def handle_procedure(s: ClientSession, id_: int, section: str) -> bool:
+    global TEMP_URL_PART
 
+    url = f'{DOMAIN}/_next/data/{TEMP_URL_PART}/ru/{section}/procedures/{id_}.json'
+    logging.info(f'Start collecting data for {url}')
+
+    if (r := await session_request(s.get, url, 'json')) == 404:
+        logging.info(f'Code=404. Going to check TEMP_URL_PART')
+        if (temp := await get_url_temp_part()) == TEMP_URL_PART:
+            logging.info(f'Page was not found. Probably time expired. {url}')
+            return False
+        else:
+            TEMP_URL_PART = temp
+            logging.info(f'Changed {TEMP_URL_PART=}. Do request again')
+            return await handle_procedure(s, id_, section)
+
+    r: dict = r['pageProps']['procedureItem']
     procedure_data = {
         'Наименование закупки': r['title'],
         'Номер': r['registryNumber'],
