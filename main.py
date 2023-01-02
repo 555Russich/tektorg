@@ -95,11 +95,7 @@ async def get_url_temp_part() -> bool:
     url = f'{DOMAIN}/{SECTIONS[0]}/procedures'
     async with ClientSession(headers=headers) as s:
         r = await session_request(s.get, url, 'html')
-        return re.search(
-            r'(?<=<script src=\"\/_next\/static\/)pvgA3BcytfvyFujWR0mO9'
-            r'(?=\/_buildManifest\.js\" defer=\"\"><\/script>)',
-            r
-        ).group(0)
+        return re.search(r'(?<=buildId\":\").+?(?=\")', r).group(0)
 
 
 async def collect_data() -> None:
