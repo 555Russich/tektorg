@@ -194,7 +194,7 @@ async def handle_procedure(s: ClientSession, id_: int, section: str) -> bool:
         filename = re.sub(r'[<>:"/\\|?*]', '', doc_data['filename'])
         filepath = Path(DIR_PROCEDURES, procedure_data['Номер'], filename)
         if filepath.exists():
-            logging.error(f'{str(filepath)} already exists')
+            logging.warning(f'Path "{str(filepath)}" already exists')
         files_data.append({'url': doc_data['httpLink'], 'path': filepath})
 
     for d in files_data:
