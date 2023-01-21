@@ -8,13 +8,15 @@ import platform
 from typing import Callable
 from datetime import datetime
 
-from aiohttp import ClientSession, ClientResponse
+from aiohttp import ClientSession
 import schedule
 import pandas as pd
 
 from my_logging import get_logger
 
 DOMAIN = 'https://www.tektorg.ru'
+RETRIES = 31
+TIMEOUT_DOWNLOADING = 60*60  # in seconds
 
 LOGFILE = 'tektorg.log'
 DIR_PROCEDURES = r'D:\procedures' if platform.system() == 'Windows' else 'procedures'
@@ -22,7 +24,6 @@ FILENAME_XLSX = r'procedures.xlsx'
 FILEPATH_XLSX = Path(DIR_PROCEDURES, FILENAME_XLSX)
 Path(DIR_PROCEDURES).mkdir(exist_ok=True)
 
-RETRIES = 31
 
 ua_platform = '(X11; Ubuntu; Linux x86_64; rv:108.0)' if platform.system() == 'Linux'\
     else '(Windows NT 10.0; Win64; x64; rv:108.0)'
@@ -39,7 +40,7 @@ headers = {
     'Sec-Fetch-User': '?1',
 }
 
-TEMP_URL_PART = ''  #  https://www.tektorg.ru/_next/data/{TEMP_URL_PART}/ru/rosneft/procedures/{id}.json
+TEMP_URL_PART = ''  # https://www.tektorg.ru/_next/data/{TEMP_URL_PART}/ru/{section}/procedures/{id}.json
 SECTIONS = (
     'rosneft',
     'rosnefttkp',
@@ -63,6 +64,8 @@ def do_with_retries(func: Callable,
                     time.sleep(random.randint(1*60, 3*60))
                 else:
                     time.sleep(random.randint(*sleep_range))
+            except KeyboardInterrupt:
+                exit()
     return wrapper
 
 
@@ -133,6 +136,7 @@ async def get_procedures_urls(s: ClientSession, section: str) -> list:
         r = await session_request(s.post, url, 'json', json_data)
 
         for d in r['data']:
+            d: dict
             if d['registryNumber'] not in procedures_numbers_appended:
                 procedures_ids.append(d["id"])
 
@@ -206,8 +210,8 @@ async def handle_procedure(s: ClientSession, id_: int, section: str) -> bool:
 
 @do_with_retries
 async def download_file(s: ClientSession, url: str, filepath: Path) -> bool:
-    logging.info(f'Downloading "{filepath.name}" from {url}')
-    async with s.get(url, timeout=60*20) as r:
+    logging.info(f'Downloading "{filepath}" from {url}')
+    async with s.get(url, timeout=TIMEOUT_DOWNLOADING) as r:
         with open(str(filepath), 'wb') as f:
             f.write(await r.read())
             return True
@@ -237,7 +241,7 @@ def append_row_to_xlsx(filepath: Path, row: dict) -> None:
         except KeyboardInterrupt:
             logging.info(f'Interrupted by keyboard. Trying write file again')
             interrupted = True
-        except:
+        except Exception:
             raise
 
 
