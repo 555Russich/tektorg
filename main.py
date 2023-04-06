@@ -16,7 +16,7 @@ from my_logging import get_logger
 
 DOMAIN = 'https://www.tektorg.ru'
 RETRIES = 31
-TIMEOUT_DOWNLOADING = 60*60  # in seconds
+TIMEOUT_DOWNLOADING = 60 * 60  # in seconds
 
 LOGFILE = 'tektorg.log'
 DIR_PROCEDURES = r'D:\procedures' if platform.system() == 'Windows' else 'procedures'
@@ -47,10 +47,8 @@ SECTIONS = (
 )
 
 
-def do_with_retries(func: Callable,
-                    retries: int = RETRIES,
-                    sleep_range: tuple = (30, 60),
-                    ) -> Callable:
+def do_with_retries(func: Callable, retries: int = RETRIES,
+                    sleep_range: tuple = (30, 60)) -> Callable:
     async def wrapper(*args, **kwargs):
         for retry in range(1, retries+1):
             try:
@@ -69,16 +67,11 @@ def do_with_retries(func: Callable,
     return wrapper
 
 
-async def session_request(method: Callable,
-                          url: str,
-                          response_type: str,
-                          json_data: dict = None
-                          ) -> dict | str | int | bool:
+async def session_request(method: Callable, url: str, response_type: str,
+                          json_data: dict = None) -> dict | str | int | bool:
     global TEMP_URL_PART
 
-    async with method(url,
-                      json=json_data
-                      ) as r:
+    async with method(url, json=json_data) as r:
         match r.status:
             case 200:
                 match response_type:
@@ -128,22 +121,19 @@ async def get_procedures_urls(s: ClientSession, section: str) -> list:
             'sectionsCodes[0]': section,
             'page': 1,
             'sort': 'datePublished_desc',
-            'limit': 100
+            # 'limitPage': 5
         },
     }
     while not appended_all_new:
         procedures_ids_temp = procedures_ids.copy()
         r = await session_request(s.post, url, 'json', json_data)
 
-        for d in r['data']:
-            d: dict
+        for d in r.get('data'):
             if d['registryNumber'] not in procedures_numbers_appended:
                 procedures_ids.append(d["id"])
 
-        if len(procedures_ids_temp) == len(procedures_ids) or \
-                json_data['params']['page'] == r['totalPages']:
+        if len(procedures_ids_temp) == len(procedures_ids) or json_data['params']['page'] == r['totalPages']:
             appended_all_new = True
-
         logging.info(f'Page {json_data["params"]["page"]}/{r["totalPages"]}.'
                      f' Collected ids {len(procedures_ids)}')
         json_data["params"]['page'] += 1
